@@ -1,0 +1,209 @@
+---
+title: "Valorant Predictions"
+author: "Dina Dinh"
+date: "2024-03-26"
+output:
+  html_document:
+    df_print: paged
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+library(easypackages)
+libraries("readxl", "ggplot2","tidyverse", "shiny", "shinythemes", "randomForest","AUC","tidymodels",
+          "mlbench", "recipes","workflows","ranger","parsnip")
+```
+
+```{r, echo=FALSE}
+df1 = read_excel("G:/My Drive/SPRING 2024/EXST7152/Midterm Project/Data/DD_CompetitiveCareer_02_25_2023.xlsx")
+df1 = df1 %>%
+  mutate(across(c("Agent", "Map","Results","Placement", "AverageRankofMatch"), as.factor)) 
+df1 = df1[,-which(names(df1)=="Match Score")]
+df1 =  df1[df1$Results != "D", ]
+df1$Results <- droplevels(df1$Results)
+df1$Results <- ifelse(df1$Results == "W", 1, 0)
+df1$Results = as.factor(df1$Results)
+df1$Date <- as.Date(df1$Date)
+df2 = df1[c("Results", setdiff(names(df1), "Results"))]
+
+n=length(df2)
+N = nrow(df2)
+```
+
+```{r, echo=FALSE}
+trees <- seq(from = 200, to = 1000, by = 100)
+z <- length(trees)
+rf.max.auc1 <- vector(mode = "numeric", length = z)
+N = nrow(df2)
+for (i in 1:z) {
+  set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+  rf_model1 <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results,ntree=trees[i], keep.forest = TRUE)
+  rf_predicted_class1 <- rf_model1$test$predicted
+  rf.max.auc1[i] <- max(auc(roc(rf_predicted_class1,test_y$Results)))
+}
+optimal.ntrees <- trees[which.max(rf.max.auc1)]
+```
+
+We will now find the optimal m using the optimal number of trees based on AUC score. As we know, too large m will have high correlation and low bias.
+
+```{r, warning=FALSE, echo=FALSE}
+m <- seq(from = 4, to = 20, by = 1)
+h <- length(m)
+rf.max.auc2 <- vector(mode = "numeric", length = h)
+for (i in 1:h) {
+  set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+  rf_model2 <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = m[i],
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class2 <- rf_model2$test$predicted
+  rf.max.auc2[i] <- max(auc(roc(rf_predicted_class2,test_y$Results)))
+}
+optimal.m <- m[which.max(rf.max.auc2)]
+```
+
+Now, find the optimal tree depth using the optimal number of trees and optimal m based on AUC score. The smaller the node size, the deeper the tree.
+
+```{r, echo=F}
+depth <- seq(from = 1, to = 200, by = 1)
+d <- length(depth)
+rf.max.auc3 <- vector(mode = "numeric", length = d)
+for (i in 1:d) {
+  set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+  rf_model3 <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = optimal.m, nodesize = depth[i],
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class3 <- rf_model3$test$predicted
+  rf.max.auc3[i] <- max(auc(roc(rf_predicted_class3,test_y$Results)))
+}
+optimal.depth <- depth[which.max(rf.max.auc3)]
+```
+
+```{r,echo=FALSE}
+set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 3:n]
+  test_x <- df2[-index, 3:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+rf_model <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = optimal.m, nodesize = optimal.depth,
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class <- rf_model$test$predicted
+  rf_error <- table(actual = test_y$Results, predicted = rf_predicted_class)
+  rf_misclass_rate <- 1-sum(diag(rf_error))/sum(rf_error)
+ 
+  rf_auc <- auc(roc(rf_predicted_class,test_y$Results))
+```
+
+```{r}
+dm_rf_mod <- rand_forest(mtry = optimal.m, min_n = optimal.depth, trees = optimal.ntrees) %>% 
+  set_engine("ranger", num.threads = 8) %>%
+  set_mode("classification")
+
+rf_recipe <- recipe(Results ~ ., data = train)
+  
+rf_workflow <- workflow() %>% 
+  add_model(dm_rf_mod) %>% 
+  add_recipe(rf_recipe)
+
+rf_fit <- rf_workflow %>% 
+  fit(data = train)
+
+# predict(rf_fit, dm_testing, type = "prob")
+
+# augment(rf_fit, dm_testing)
+
+saveRDS(rf_fit, "rf_model.RDS")
+
+```
+
+
+
+
+ui <- fluidPage(theme = shinytheme("cyborg"),
+
+
+```{r}
+ui <- fluidPage(theme = shinytheme("cyborg"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("agent", "Choose Agent:", choices = levels(df2$Agent)),
+      selectInput("map", "Choose Map:", choices = levels(df2$Map)),
+      actionButton("predict_button", "Predict")
+    ),
+    mainPanel(
+      DTOutput("prediction_table")
+    )
+  )
+)
+
+# Server function
+server <- function(input, output) {
+  # Function to generate the prediction table
+  generatePredictionTable <- function(agent, map) {
+    # Filter the dataset based on the selected agent and map
+    filtered_data <- df2[df2$Agent == input$agent & df2$Map == input$map, ]
+    
+    # Use the trained random forest model to make predictions
+    rf_predicted <- predict(rf_model, newdata = filtered_data)
+    temp1 <- as.numeric(rf_predicted>=0.5)
+    
+    # Create a data frame with the predictions and probabilities
+    prediction_data <- data.frame(
+      Agent = filtered_data$agent,
+      Map = filtered_data$map,
+      Predicted_Class = mode(temp1),
+      Probability = rf_predicted
+    )
+    
+    # Return the prediction data frame
+    return(prediction_data)
+  }
+  
+  # Event handler for the predict button
+  observeEvent(input$predictButton, {
+    agent <- input$agent
+    map <- input$map
+    
+    # Generate the prediction table
+    prediction_data <- generatePredictionTable(agent, map)
+    
+    # Show the prediction table
+    output$predictionTable <- renderTable({
+      prediction_data
+    })
+  })
+}
+
+# Run the Shiny app
+shinyApp(ui, server)
+```
+

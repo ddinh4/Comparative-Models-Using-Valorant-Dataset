@@ -1,0 +1,813 @@
+---
+title: "Valorant Win Predictions - EXST 7152"
+author: "Dina Dinh"
+date: "2024-03-24"
+output: 
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Required Packages
+```{r, message=FALSE, warning=FALSE}
+library(easypackages)
+libraries("readxl", "tidyverse", "ggplot2", "gridExtra", "viridis", "MASS", "AUC", "caret",
+          "car", "glmnet", "pls", "mda", "randomForest", "psych")
+```
+
+
+# Introduction
+
+Valorant, a competitive first-person shooter game, was developed and released by Riot Games in June 2020. It is characterized as a team-based tactical shooter that prioritizes precise aiming, strategic coordination, and the effective employment of distinctive agent abilities. The game presents an array of agents, each endowed with unique capabilities and an assortment of weapons, enabling players to adopt strategic maneuvers to secure an advantage over the opposing team. Participants are split into two factions—attackers and defenders—and partake in a succession of rounds aiming to either plant or defuse a bomb or to eliminate the rival team entirely. Usually, the game is over once one of the two factions wins 13 rounds in a match.
+
+The intricacies of shooting mechanics are fundamental to the gameplay of Valorant, demanding from players not only proficiency in aiming but also in controlling recoil. Furthermore, the game accentuates the importance of strategic positioning, dominance over the map, and the judicious application of utilities. Effective communication and coordination within a team are imperative, requiring players to make immediate decisions and adapt to the dynamically evolving circumstances of each round. Following each match, players receive an exhaustive report detailing their performance, thereby raising a pertinent question: Is it feasible for the statistical data of a single player to predict the outcome of a match? Consequently, this leads to an examination of which specific statistics are crucial in forecasting whether a match will culminate in a victory or defeat.
+
+# Data Source
+
+The dataset includes player statistics from individual matches, such as Average Combat Score (ACS), the agent used, the map played, and the kill/death ratio. This information was retrieved from the player's competitive history on tracker.gg. The goal is to analyze these statistics to determine which factors might predict the outcome of a match, focusing on identifying key performance indicators that influence whether a game is won or lost. The dataset is as of February 16, 2023 and consists of 20 variables:
+
+1. Date
+2. Agent: 21 agents to choose from.
+3. Map: 9 maps randomly assigned to each match.
+4. Placement: shows the placement of target player compared to the other 9 players in the match based on ACS.
+5. Match score: shows the final score of the match (removed)
+6. Duration: total length of the match in minutes.
+7. Average Rank of Match: average of all the players' ranks in each match.
+8. Average Combat Score (ACS): calculated based on kills, multi-kills, and damage done to the enemy team.
+9. A: amount of times a teammate killed an enemy the target player done at least 50 damage to.
+10.K: amount of kill in the match.
+11. D: amount of times died in the match.
+12. K_D: ratio of kills per death.
+13. Average Damage Per Round (ADR): average damage the target player did per round.
+14. HS: headshot percentage.
+15. KAST: percent of rounds where you got a kill, assist, survived, or traded.
+16. First Kill: amount of rounds to be the first person on the team to get a kill in a round.
+17. First Death: amount of rounds to be the first to die in a round.
+18. MK (Multikill): amount of rounds getting more than 1 kill during a round.
+19. Econ: how well the target player managed their in-game currency during the match.
+20. Result: outcome of the match.
+
+
+# Data Cleaning
+
+In the revised analysis, the variable "Match Score" has been removed from consideration. Categorical variables have been converted into factor types. Additionally, the response variable "Results" has been converted into a binary format. Notably, the outcome "D," representing draws, has been excluded from the analysis due to its limited occurrence in only three matches (observations). 
+
+```{r, echo=FALSE, warning=F}
+df1 = read_excel("G:/My Drive/SPRING 2024/EXST7152/Midterm Project/Data/DD_CompetitiveCareer_02_25_2023.xlsx")
+df1 = df1 %>%
+  mutate(across(c("Agent", "Map","Results","Placement", "AverageRankofMatch"), as.factor)) 
+df1 = df1[,-which(names(df1)=="Match Score")]
+df1 =  df1[df1$Results != "D", ]
+df1$Results <- droplevels(df1$Results)
+df1$Results <- ifelse(df1$Results == "W", 1, 0)
+df1$Results = as.factor(df1$Results)
+df1$Date <- as.Date(df1$Date)
+df2 = df1[c("Results", setdiff(names(df1), "Results"))]
+```
+# Analyzing the Data
+
+## Summary Statistics
+
+First, let's take a look at some graphs of the explanatory variables as well as the distribution of response variable.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = Results)) + 
+      geom_bar(position="stack", stat="count") +
+      ggtitle("Match Results") +
+      theme_classic() +
+      ylab("Frequency") +
+      geom_text(position="stack", stat='count', aes(label=after_stat(count)), colour="red", vjust=-0.5, size=2)
+```
+
+The response variable seems to have a balance of both wins and loses.
+
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = Agent, fill = Results)) + 
+      geom_bar(position="stack", stat="count") +
+      ggtitle("Agent Frequency Table") +
+      scale_fill_viridis(discrete = T) +
+      theme_classic() +
+      ylab("Frequency") +
+      xlab("Agents") +
+      geom_text(position="stack", stat='count', aes(label=after_stat(count)), colour="red", vjust=-0.5, size=2) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Here we can see an imbalance of the agents chosen. The target player seems to favor playing some agents more than others.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = Map, fill = Results)) + 
+      geom_bar(position="stack", stat="count") +
+      ggtitle("Map Frequency Table") +
+      scale_fill_viridis(discrete = T) +
+      theme_classic() +
+      ylab("Frequency") +
+      xlab("Maps") +
+      geom_text(position="stack", stat='count', aes(label=after_stat(count)), colour="red", vjust=-0.5, size=2) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The maps are chosen randomly per match. The newer maps tend to have less frequency than the older maps. The wins and losses seem balanced for each map.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = Placement, fill = Results)) + 
+      geom_bar(position="stack", stat="count") +
+      ggtitle("Placement Frequency Table") +
+      scale_fill_viridis(discrete = T) +
+      theme_classic() +
+      ylab("Frequency") +
+      xlab("Placements") +
+      geom_text(position="stack", stat='count', aes(label=after_stat(count)), colour="red", vjust=-0.5, size=2) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The player in the analysis tend to place below 5 with wins and losses practically even for each placement. There's noticeably more wins when the player places 5th.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `AverageRankofMatch`, fill = Results)) + 
+      geom_bar(position="stack", stat="count") +
+      ggtitle("Average Rank of Match Frequency Table") +
+      scale_fill_viridis(discrete = T) +
+      theme_classic() +
+      ylab("Frequency") +
+      xlab("Ranks") +
+      geom_text(position="stack", stat='count', aes(label=after_stat(count)), colour="red", vjust=-0.5, size=2) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The player tend to be in matches with other Silver ranked player and occasionally Gold rank. Again, the wins and losses seem to be balanced for each rank too.
+
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = Date, y = `AverageCombatScore`)) +
+  geom_line() + # Use geom_line() for line plots
+  geom_point() + # Adds points to the line plot
+  scale_x_date(date_labels = "%Y-%m-%d") + # Customize date format and breaks
+  theme_minimal() + # Optional: Use a minimal theme
+  labs(x = "Date", y = "ACS", title = "ACS over Time")
+```
+
+Most players tend to track their performance by using ACS. The higher the ACS the better the player performed in the match. We can see that the ACS looks consistent, showing not much improvement in the player's performance over the years, but let's see if the other players' ranks in the match increased over time.
+
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = Date, fill = `AverageRankofMatch`)) + 
+      geom_bar(position="stack", stat="count") +
+      ggtitle("Average Rank of Match over Time") +
+      theme_classic() +
+      ylab("Frequency") +
+      xlab("")
+```
+
+The player started in the Bronze-Silver range, but you can see a bit more occurrences of Platinum/Gold in the later year. This can cause the player's ACS to be consistent over time when the level of the difficulty in the matches increases.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `AverageCombatScore`, fill = `AverageRankofMatch`)) +
+  geom_histogram(binwidth = 5, aes(y = after_stat(density))) +
+  theme_classic() +
+  labs(x = "ACS", y = "Relative Frequency")
+```
+
+Most of the player's ACS ranged between 100 to 200 across all ranks of the matches and seems to be a bit higher in the lower ranks such as Bronze.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `AverageCombatScore`, fill = `Map`)) +
+  geom_histogram(binwidth = 5, aes(y = after_stat(density))) +
+  theme_classic() +
+  labs(x = "ACS", y = "Relative Frequency")
+```
+
+The player's ACS seems consistent across all maps, potentially slightly better in Lotus and Icebox.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `AverageCombatScore`, fill = `Results`)) +
+  geom_histogram(binwidth = 5, aes(y = after_stat(density))) +
+  theme_classic() +
+  labs(x = "ACS", y = "Relative Frequency")
+```
+
+There's bit more wins than losses when the ACS of the player is over about 190.
+
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `D`, fill = `Results`)) +
+  geom_histogram(binwidth = .5, aes(y = after_stat(density))) +
+  theme_classic() +
+  labs(x = "Deaths", y = "Relative Frequency")
+```
+
+Here, we can see a more distinguishable difference between the 2 classes in the response when the player dies less in the match. The wins are much greater than losses when the death of player in a match is less than about 12.
+
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `KAST`, fill = `Results`)) +
+  geom_histogram(binwidth = 5, aes(y = after_stat(density))) +
+  theme_classic() +
+  labs(x = "KAST%", y = "Relative Frequency")
+```
+
+There seems to be more wins than losses as the values of KAST increases.
+
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+ggplot(df1, aes(x = `K_D`, fill = `Results`)) +
+  geom_histogram(binwidth = .5, aes(y = after_stat(density))) +
+  theme_classic() +
+  labs(x = "K/D", y = "Relative Frequency")
+```
+
+There are no losses when the K/D of the play is greater than 2.
+
+
+```{r, fig.dim=c(5,4), fig.align='left', echo= F}
+boxplot(df2, ylim = c(0,350))
+```
+
+There are also outliers in many of the explanatory variables.
+
+# Prediction Models
+
+## Logistic Regression
+
+First, let's try to do some predictions using a basic logistic regression model.
+
+```{r, eval=FALSE, echo=FALSE}
+# TRAIN TEST SPLIT
+N = nrow(df2)
+n = length(df2)
+set.seed(i)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+```
+
+
+```{r, warning=FALSE}
+w= c(1,2,6,7,8,11,12,14,17,19) #strange choice of numbers due to the near zero frequency of some agents
+log_misclass_rate <- vector(mode = "numeric", length =length(w))
+log_auc <- vector(mode = "numeric", length =length(w)) 
+N = nrow(df2)
+n = length(df2)
+for (i in seq_along(w)){
+set.seed(w[i])
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]  
+logitmodel <- glm(Results ~., family = binomial(link = logit), data = train)
+  pred_logitmod <- predict(logitmodel, newdata = test, type = "response")
+  log_predicted_class <- ifelse(pred_logitmod > 0.5, 1, 0)
+  log_predicted_class <- factor(log_predicted_class, levels = c(0, 1))
+
+  log_error <- table(actual = test_y$Results, predicted = log_predicted_class)
+
+  log_misclass_rate[i] <- 1-sum(diag(log_error))/sum(log_error)
+  log_auc[i] <- auc(roc(log_predicted_class, test_y$Results))
+}
+results = data.frame(Log_Err = log_misclass_rate, Log_auc = log_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+
+From the logistic regression model, we can see that the mean misclassification rate of 10 iterations is about 25.91% and the mean area under the curve (AUC) score is about 0.7417. Below is also the confusion matrix and the plot of the ROC curve for the logistic regression model.
+
+
+```{r, echo=FALSE}
+log.cm = confusionMatrix(log_predicted_class,test_y$Results, mode = "everything", positive ="1")
+log.cm
+```
+
+```{r, fig.dim=c(5,4), fig.align='left', echo= F}
+log_spec <- AUC::specificity(log_predicted_class,test_y$Results)$measure
+log_sens <- AUC::sensitivity(log_predicted_class,test_y$Results)$measure
+
+plot(1-log_spec,log_sens, xlab = "1-Specificity", ylab = "Sensitivity", type = "l", col = "red", lwd = 2)
+```
+
+
+Now, let's check if there's multicollinearity and using deviance to check variable importance in the logistic model.
+
+```{r, warning=F, echo=F}
+vif(logitmodel)
+anova(logitmodel)
+```
+
+There is some strong multicollinearity issues with some VIF values much greater than 10. This is expected since the "K_D" variable is the ratio of "K" and "D" and some of the explanatory variables used to calculate another. In the Deviance table, variables with larger deviance have more importance in the in the model. "D" seems to be most important in predicting the outcome of the match in logistic regression.
+
+*Not shown but stepwise variable selection was performed on the logistic model to try and relieve multicollinearity issues. The reduced model performed slightly better with misclass rate of 22% and AUC score 0.78. However, there were still high multicollinearity according to the VIF values.*
+
+## Ridge Regression 
+
+Let's see if the predictions can be improved by relieving some multicollinearity problems using ridge regression. Dummy variables were created for the multilevel categorical variables since ridge regression can only handle numeric explanatory variables.
+
+```{r, echo=FALSE,warning=FALSE}
+dummy.cols = c("Agent", "Map", "Placement", "AverageRankofMatch")
+dummy.df3 = model.matrix(~ . -1, data = df2[, dummy.cols])
+df3 = cbind(df2, dummy.df3)
+df3 = df3[,-which(names(df3) %in% c("Agent", "Map", "Placement", "AverageRankofMatch"))]
+```
+
+When $\alpha$ = 0, then the ridge regression is used. The cv.glmnet() automatically fits the ridge regression using the most optimal lambda based on cross-validation.*Note: There's a strange choice of numbers for the seed due to the near zero frequency of some agent. The seed choice were based on each train and test sets have all levels of each categorical variables.*
+
+```{r}
+w= c(1,2,6,7,8,11,12,14,17,19)
+ridge_misclass_rate <- vector(mode = "numeric", length =length(w))
+ridge_auc <- vector(mode = "numeric", length =length(w)) 
+x = model.matrix(Results~., df3)[, -1]
+y = df3$Results
+N = nrow(df3)
+for (i in seq_along(w)){
+set.seed(w[i])
+train <- sample(1:N, N*.8, replace = F)
+test <- (-train)
+y.test <- y[test]
+train.df = data.frame(df3[train,])
+test.df = data.frame(df3[test,])
+ridge.mod = cv.glmnet(x[train,],y[train],family = "binomial", alpha=0)
+ridge.pred = predict(ridge.mod, newx=x[test,], type = "response")
+
+ridge_pred_class <- ifelse(ridge.pred > 0.5, 1, 0)
+ridge_pred_class <- factor(ridge_pred_class, levels = c(0, 1))
+
+  ridge_error <- table(actual = test_y$Results, predicted = ridge_pred_class)
+
+  ridge_misclass_rate[i] <- 1-sum(diag(ridge_error))/sum(ridge_error)
+  ridge_auc[i] <- auc(roc(ridge_pred_class, test_y$Results))
+}
+results = data.frame(Ridge_Err = ridge_misclass_rate, Ridge_auc = ridge_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+
+
+```{r, echo=FALSE}
+confusionMatrix(ridge_pred_class,test_y$Results, mode = "everything", positive ="1")
+```
+
+Even though some multicollinearity might be relieved, ridge regression actually does worse than logistic regression with average misclass rate of 44.66% and average AUC score 0.5574! Looking at the 10 iterations, there seems to be a bit of variability between each iteration of the AUC and misclass rate too.
+
+## Principle Component Analysis (PCA)
+
+PCA can be used as a dimension reduction technique for supervised methods like in this case. PCA can reduce dimensions by extracting a linear combination of optimally-weighted observed variables.
+
+PCA is effective in dealing with multicollinearity because all the principal components are orthogonal and uncorrelated to each other. Then, a classification algorithm can be applied to the PCs instead of the original input variables.
+
+The variable "Date" has been removed for the PCA since PCA can only handle numeric variables. The dummy variables for the multilevel categorical variables were used here as well.
+
+PCA was done on the standardized dataset because we are assuming no knowledge of which explanatory variables are important. The first PC shows the direction that maximizes the variance in that direction. The second PC is orthogonal to the first PC and is the one that maximizes the variance under the condition that is assigned to it.
+
+```{r, fig.dim=c(5,4), fig.align='left'}
+w= c(1,2,6,7,8,11,12,14,17,19)
+pca_log_misclass_rate <- vector(mode = "numeric", length =length(w))
+pca_log_auc <- vector(mode = "numeric", length =length(w)) 
+n = length(df3)
+N = nrow(df3)
+for (i in seq_along(w)){
+set.seed(w[i])
+train <- sample(1:N, N*.8, replace = F)
+test <- (-train)
+y = df3$Results
+y.test <- y[test]
+x.test = df3[test, 3:n]
+x.train = df3[train, 3:n]
+y.train = y[train]
+train.df = data.frame(df3[train,])
+test.df = data.frame(df3[test,])
+
+pca <- prcomp(x.train,scale=T)
+ResultsPCH <- as.numeric(factor(df3$Results))
+par(mfrow=c(1,2))
+screeplot(pca,main="Scree Plot")
+plot(pca$x[,1],pca$x[,2],xlab="PC1", ylab="PC2",type="p",col=ResultsPCH,pch=ResultsPCH)
+
+train_pcs <- pca$x[, 1:2]
+test_pcs <- predict(pca, newdata = x.test)[, 1:2]
+pca.train = data.frame(Results = y.train, train_pcs)
+pca.test = data.frame(Results = y.test, test_pcs)
+pca.logitmodel <- glm(Results ~., family = binomial(link = logit), data = pca.train)
+pca_pred_logitmod <- predict(pca.logitmodel, newdata = pca.test, type = "response")
+
+  pca_log_predicted_class <- ifelse(pca_pred_logitmod > 0.5, 1, 0)
+  pca_log_predicted_class <- factor(pca_log_predicted_class, levels = c(0, 1))
+  pca_log_auc[i] <- auc(roc(pca_log_predicted_class, y.test))
+pca_log_misclass_rate[i] = 1- confusionMatrix(pca_log_predicted_class, y.test, mode = "everything", positive ="1")[["overall"]][["Accuracy"]]
+}
+results = data.frame(PCA_Err = pca_log_misclass_rate, PCA_auc = pca_log_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+From all the scree plot, the optimal number of PCs is 1.
+
+The logistic regression done on the PC actually gave the worse results out than the default logistics regression, but better than ridge regression with misclass rate of about 39.09% and AUC score of 0.6096! However, using PCs resolves the multicollinearity issues in logistic regression.
+
+## Data Visualization
+
+First, let's visualize the raw data.
+
+```{r, fig.dim=c(5,4), fig.align='left'}
+col=as.numeric(df3$Results)
+matplot(2:n,t(x[1:200,]),col=col[1:200],type="l",
+xlab="Frequency",ylab="Log-periodogram")
+legend("topright",legend=levels(df3$Results),lty=1,col=1:2)
+```
+
+We can see that the two classes of the response variable are not easily distinguishable using the raw data.
+
+## Linear Discriminant Analysis (LDA)
+
+LDA can be used to classify the boundary between the two classes in the binary response variable, Results, based on the other quantitative explanatory variables. The multi-level categorical variables were replaced with dummy variables here too.
+
+
+```{r, warning=FALSE}
+# df3 = df2[,-2]
+w= c(1,2,6,7,8,11,12,14,17,19)
+lda_misclass_rate <- vector(mode = "numeric", length =length(w))
+lda_auc <- vector(mode = "numeric", length =length(w)) 
+n = length(df3)
+N = nrow(df3)
+for (i in seq_along(w)){
+set.seed(w[i])
+x.lda = as.matrix(df3[,3:length(df3)])
+id <- sample(1:N, N*.8, replace = F)
+
+fit.lda = lda(x.lda[id,], y[id])
+lda.pred<-predict(fit.lda,x.lda[-id,])
+table(lda.pred$class,y[-id])
+lda_misclass_rate[i] = 1-sum(lda.pred$class==y[-id])/length(y[-id])
+lda_auc[i] <- auc(roc(lda.pred$class,y[-id]))
+}
+results = data.frame(LDA_Err = lda_misclass_rate, LDA_auc = lda_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+The average misclass rate for the LDA is 25.68% and AUC score is 0.7444, which is on par with the default logistic regression model which is what we discussed in class. 
+
+```{r, fig.dim=c(5,4), fig.align='left'}
+lda.var <- predict(fit.lda,dimen=2)$x
+plot(lda.var,xlab="Dim 1",ylab="Dim 2",col=col[id],pch=col[id],cex=0.7)
+legend("topright",legend=levels(y),pch=1:2,col=1:2,cex=1)
+```
+
+LDA distinguishes the two classes pretty well with some minor overlap.
+
+## Random Forest (RF)
+
+RF is one of the best models for predictions when handling big and complex data for both regression and classification problems. Let's compare the unoptimized RF to the optimize RF to demonstrate the importance of optimizing the hyperparameters.
+
+```{r, echo=FALSE}
+# TRAIN TEST SPLIT
+N = nrow(df2)
+n = length(df2)
+set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+```
+
+```{r, echo=FALSE}
+N = nrow(df2)
+n = length(df2)
+w= c(1,2,6,7,8,11,12,14,17,19)
+rf_misclass_rate <- vector(mode = "numeric", length =length(w))
+rf_auc <- vector(mode = "numeric", length =length(w)) 
+for (i in seq_along(w)){
+set.seed(w[i])
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+rf_model <- randomForest(Results~., data = train, xtest = test_x,
+                     ytest=test_y$Results, keep.forest = TRUE)
+rf_predicted_class <- rf_model$test$predicted
+  rf_error <- table(actual = test_y$Results, predicted = rf_predicted_class)
+  rf_misclass_rate[i] <- 1-sum(diag(rf_error))/sum(rf_error)
+ 
+  rf_auc[i] <- auc(roc(rf_predicted_class,test_y$Results))
+}
+results = data.frame(RF_Err = rf_misclass_rate, RF_auc = rf_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+Below is the confusion matrix for the unoptimized RF. The average misclass rate of the RF is 28.18% and the AUC score is 0.7178. The unoptimized RF model performs better than the ridge regression and PCA.
+
+```{r, echo=F}
+rf.cm = confusionMatrix(rf_predicted_class, test_y$Results, mode = "everything", positive ="1")
+rf.cm
+```
+
+### Optimizing Random Forest
+
+Plots will be shown to display the best values for each hyperparameter based on AUC scores.
+
+First, we want to tune the number of trees, m, and depth to maximize area under curve (AUC) score.
+
+```{r, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+trees <- seq(from = 200, to = 1000, by = 100)
+z <- length(trees)
+rf.max.auc1 <- vector(mode = "numeric", length = z)
+N = nrow(df2)
+for (i in 1:z) {
+  set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+  rf_model1 <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results,ntree=trees[i], keep.forest = TRUE)
+  rf_predicted_class1 <- rf_model1$test$predicted
+  rf.max.auc1[i] <- max(auc(roc(rf_predicted_class1,test_y$Results)))
+}
+optimal.ntrees <- trees[which.max(rf.max.auc1)]
+plot(trees, rf.max.auc1, type = "b", xlab = "ntrees", ylab = "AUC Scores")
+```
+
+We will now find the optimal m using the optimal number of trees based on AUC score. As we know, too large m will have high correlation and low bias.
+
+```{r, warning=FALSE, echo=FALSE, fig.dim=c(5,4), fig.align='left'}
+m <- seq(from = 4, to = 20, by = 1)
+h <- length(m)
+rf.max.auc2 <- vector(mode = "numeric", length = h)
+for (i in 1:h) {
+  set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+  rf_model2 <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = m[i],
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class2 <- rf_model2$test$predicted
+  rf.max.auc2[i] <- max(auc(roc(rf_predicted_class2,test_y$Results)))
+}
+optimal.m <- m[which.max(rf.max.auc2)]
+plot(m, rf.max.auc2, type = "b", xlab = "Number of m", ylab = "AUC Scores")
+```
+
+Now, find the optimal tree depth using the optimal number of trees and optimal m based on AUC score. The smaller the node size, the deeper the tree.
+
+```{r, echo=F, fig.dim=c(5,4), fig.align='left'}
+depth <- seq(from = 1, to = 200, by = 1)
+d <- length(depth)
+rf.max.auc3 <- vector(mode = "numeric", length = d)
+for (i in 1:d) {
+  set.seed(1)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+  rf_model3 <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = optimal.m, nodesize = depth[i],
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class3 <- rf_model3$test$predicted
+  rf.max.auc3[i] <- max(auc(roc(rf_predicted_class3,test_y$Results)))
+}
+optimal.depth <- depth[which.max(rf.max.auc3)]
+plot(depth, rf.max.auc3, type = "b", xlab = "Node Size", ylab = "AUC Scores")
+```
+
+
+```{r, echo=FALSE}
+N = nrow(df2)
+n = length(df2)
+w= c(1,2,6,7,8,11,12,14,17,19)
+rf_misclass_rate <- vector(mode = "numeric", length =length(w))
+rf_auc <- vector(mode = "numeric", length =length(w)) 
+for (i in seq_along(w)){
+set.seed(w[i])
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+rf_model <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = optimal.m, nodesize = optimal.depth,
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class <- rf_model$test$predicted
+  rf_error <- table(actual = test_y$Results, predicted = rf_predicted_class)
+  rf_misclass_rate[i] <- 1-sum(diag(rf_error))/sum(rf_error)
+ 
+  rf_auc[i] <- auc(roc(rf_predicted_class,test_y$Results))
+}
+results = data.frame(RF_Err = rf_misclass_rate, RF_auc = rf_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+As we can see, the optimized RF does the best so far with misclass rate of 27.84% and AUC score 0.7210. The most important variables in the optimized RF prediction model is "D", followed by "KAST" and "K_D". Both the logistic and RF model agree that the variable "D" contribute most in predicting the response and is most related to the response.
+
+```{r, echo=F, fig.dim=c(5,4), fig.align='left'}
+rf.cm = confusionMatrix(rf_predicted_class, test_y$Results, mode = "everything", positive ="1")
+rf.cm
+varImpPlot(rf_model, sort = T)
+```
+
+# MARS (Multivariate Adaptive Regression Splines), CART-related Method
+
+MARS is a flexible and adaptive technique well suited for complex data. MARS is a generalization of stepwise linear regression and a
+modification of the CART method to improve its performance. It can also automatically model complex interactions between variables and can handle both numerical and categorical predictors.  A restriction of MARS on the formation of model terms is each input can appear at most once in a product. This prevents the formation of higher-order powers of an input, which increase or decrease too sharply near the boundaries of the feature space.
+
+Dummy variables must be used for multilevel categorical variables.
+
+```{r, echo=FALSE}
+set.seed(1)
+n = length(df3)
+N = nrow(df3)
+train <- sample(1:N, N*.8, replace = F)
+test <- (-train)
+y = df3$Results
+y.test <- y[test]
+x.test = df3[test, 3:n]
+x.train = df3[train, 3:n]
+y.train = y[train]
+train.df = data.frame(df3[train,])
+test.df = data.frame(df3[test,])
+```
+
+
+```{r}
+N = nrow(df3)
+n = length(df3)
+w= c(1,2,6,7,8,11,12,14,17,19)
+mars_misclass_rate <- vector(mode = "numeric", length =length(w))
+mars_auc <- vector(mode = "numeric", length =length(w)) 
+for (i in seq_along(w)){
+set.seed(w[i])
+train <- sample(1:N, N*.8, replace = F)
+test <- (-train)
+y = df3$Results
+y.test <- y[test]
+x.test = df3[test, 3:n]
+x.train = df3[train, 3:n]
+y.train = y[train]
+train.df = data.frame(df3[train,])
+test.df = data.frame(df3[test,])
+ fit1 <- mars(x.train,y.train)
+
+ pred1 <- predict(fit1,x.test)
+ temp1 <- as.numeric(pred1>=0.5)
+ res1 <- table(temp1,y.test)
+mars_misclass_rate[i] = 1-sum(diag(res1))/sum(res1) #misclassification rate
+mars_auc[i] <- auc(roc(factor(temp1),y.test))
+}
+results = data.frame(MARS_Err = mars_misclass_rate, MARS_auc = mars_auc)
+summary_results=describe(results)
+knitr::kable(results)
+knitr::kable(round(summary_results, digits = 4))
+```
+
+The MARS misclass rate is 27.50% and AUC score 0.7258 which is on par with the optimized random forest!
+
+## Comparing MARS vs RF
+
+I wanted to compare these two models specifically because they are the most robust when there are low frequency of some levels in the multilevel categorical variables and can handle zero frequencies in some levels.
+
+```{r}
+w=20
+mars_misclass_rate <- vector(mode = "numeric", length = w)
+mars_auc <- vector(mode = "numeric", length = w) 
+rf_misclass_rate <- vector(mode = "numeric", length = w)
+rf_auc <- vector(mode = "numeric", length = w) 
+for (i in 1:w) {
+  set.seed(i)
+  n=length(df2)
+  index <- sample(1:N, size = N*.8, replace = F)
+  train_x <- df2[index, 2:n]
+  test_x <- df2[-index, 2:n]
+  train_y <- df2[index, 1]
+  test_y <- df2[-index, 1]
+  train <- df2[index,]
+  test <- df2[-index,]
+rf_model <- randomForest(Results~.,data = train, xtest = test_x,
+                     ytest=test_y$Results, mtry = optimal.m, nodesize = optimal.depth,
+                     ntree=optimal.ntrees, keep.forest = TRUE)
+  rf_predicted_class <- rf_model$test$predicted
+  rf_error <- table(actual = test_y$Results, predicted = rf_predicted_class)
+  rf_misclass_rate[i] <- 1-sum(diag(rf_error))/sum(rf_error)
+  rf_auc[i] <- auc(roc(rf_predicted_class,test_y$Results))
+}
+
+for (i in 1:w){
+  set.seed(i)
+  n = length(df3)
+  N = nrow(df3)
+  train <- sample(1:N, N*.8, replace = F)
+  test <- (-train)
+  y = df3$Results
+  y.test <- y[test]
+  x.test = df3[test, 3:n]
+  x.train = df3[train, 3:n]
+  y.train = y[train]
+  train.df = data.frame(df3[train,])
+  test.df = data.frame(df3[test,])
+  mars.fit <- mars(x.train,y.train)
+  
+  pred1 <- predict(mars.fit,x.test)
+ temp1 <- as.numeric(pred1>=0.5)
+ res1 <- table(temp1,y.test)
+mars_misclass_rate[i] = 1-sum(diag(res1))/sum(res1) #misclassification rate
+mars_auc[i] <- auc(roc(factor(temp1),y.test))
+}
+```
+
+```{r, echo=F}
+results_misclass = data.frame(MARS_Err = mars_misclass_rate, RF_Err = rf_misclass_rate)
+results_auc = data.frame(MARS_auc = mars_auc, RF_auc = rf_auc)
+summary_results_misclass=describe(results_misclass)
+summary_results_auc = describe(results_auc)
+knitr::kable(round(summary_results_misclass, digits = 4))
+knitr::kable(round(summary_results_auc, digits = 4))
+```
+
+Surprisingly, MARS performed better than the optimized RF across the average of 20 iterations! 
+
+*Note: Not shown but MARS performed slightly better when the model is additive with no interactions. Also, using the PC instead of the input variables in the RF and MARS model made both model substantially worse.*
+
+
+# Conclusion
+
+*BELOW ARE THE RESULTS THAT COMPARES EACH MODEL TO THE ONE ITERATION WITH SEED SET TO 1.*
+
+```{r, echo=FALSE}
+model.results = data.frame(
+  Model = c("Logistic Regression", "Ridge Regression", "PCA", "LDA", "Unopt RF", "Opt RF", "MARS"),
+  `AUC Scores` = c(0.76,0.56,0.636,0.779,0.797,0.806,0.791),
+  `Misclass Rate` = paste0(c(23,45,36,21.6,19.3,18,21.6), "%")
+)
+knitr::kable(model.results, caption = "One Iteration Comparison")
+```
+
+*BELOW ARE THE RESULTS THAT COMPARES AVERAGE AUC SCORE AND MISCLASS RATE OF EACH MODEL ACROSS TEN ITERATIONS.*
+
+```{r, echo=F}
+model.results = data.frame(
+  Model = c("Logistic Regression", "Ridge Regression", "PCA", "LDA", "Unopt RF", "Opt RF", "MARS"),
+  `AUC Scores` = c(0.7417,0.5574,0.6096,0.7444,0.7178,0.7210,0.7258),
+  `Misclass Rate` = paste0(c(25.91,44.66,39.09,25.68,28.18,27.84,27.50), "%")
+)
+knitr::kable(model.results, caption = "Ten Iterations Comparison")
+```
+
+
+Based on the comparison of various models such as logistic regression, PCA, LDA, RF, and MARS, we found that they all had similar prediction accuracies in terms of AUC scores and misclassification rates, but ridge regression performed the worst out of all the models. In comparing RF to MARS, the optimized RF performed the best, but after multiple iterations, MARS showed slightly better performance than RF. Although RF is known for its robustness, especially with complex data and multicollinearity, MARS was able to outperform it in this scenario.
+
+Both MARS and RF offer good accuracy and robustness. However, personally, RF tends to be more interpretable, and it doesn't require manual creation of dummy variables for categorical data, unlike MARS. Also, one could argue that RF should be optimized to produce the best accuracy.
+
+It is noteworthy how significantly the comparison results vary between single iterations and the average of multiple iterations for each model. This substantial variation is likely attributed to the imbalances observed in certain levels of the categorical variables. Among the models examined, LDA and Logistic Regression demonstrate superior performance. However, LDA exhibits lower sensitivity to multicollinearity compared to logistic regression, albeit with reduced interpretability. Despite this, LDA, logistic regression, RF, and MARS emerge as reliable options for predicting match outcomes within this dataset.
+
+An intriguing finding emerged regarding the significance of the "D" variable, representing deaths, in the prediction model. This finding is notable given that numerous players gauge their progress based on metrics such as Average Combat Score (ACS) or Kill/Death ratio (K/D). This suggests a potential area of improvement where players could benefit from emphasizing the reduction of deaths during matches.
+
+In conclusion, the analysis reveals that certain player statistics play a crucial role in accurately predicting match outcomes. Despite Valorant being a team-oriented game, these findings underscore the individual impact of a player in determining whether a match culminates in victory or defeat.
+
+Future enhancements to this model could involve integrating more granular statistics pertaining to a player's performance within each round, such as their weapon selections, utilization of in-game utilities, and other tactical decisions. By capturing these nuanced gameplay elements, the model could potentially forecast match outcomes with greater precision, even preempting results before or early in the match.
+
+# References
+
+Li, Bin. “Principle Component Analysis.” 2023. 
+
+Li, Bin. “Lab Notes: Ridge Regression Examples in R.” 2024. 
+
+Li, Bin. “Phoneme Classification Example.” 2024. 
+
+Li, Bin. “Two CART-Related Methods - PRIM and MARS.” 2024. 
+
+
